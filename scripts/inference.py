@@ -5,6 +5,7 @@ from tqdm import tqdm
 import time
 import numpy as np
 import torch
+import pickle
 from PIL import Image
 from torch.utils.data import DataLoader
 import sys
@@ -26,14 +27,18 @@ def run():
 		assert len(test_opts.resize_factors.split(',')) == 1, "When running inference, provide a single downsampling factor!"
 		out_path_results = os.path.join(test_opts.exp_dir, 'inference_results',
 		                                'downsampling_{}'.format(test_opts.resize_factors))
-		out_path_coupled = os.path.join(test_opts.exp_dir, 'inference_coupled',
-										'downsampling_{}'.format(test_opts.resize_factors))
 	else:
 		out_path_results = os.path.join(test_opts.exp_dir, 'inference_results')
-		out_path_coupled = os.path.join(test_opts.exp_dir, 'inference_coupled')
-
 	os.makedirs(out_path_results, exist_ok=True)
-	os.makedirs(out_path_coupled, exist_ok=True)
+
+	out_path_coupled = None
+	if test_opts.couple_outputs:
+		if test_opts.resize_factors is not None:
+			out_path_coupled = os.path.join(test_opts.exp_dir, 'inference_coupled',
+			                                'downsampling_{}'.format(test_opts.resize_factors))
+		else:
+			out_path_coupled = os.path.join(test_opts.exp_dir, 'inference_coupled')
+		os.makedirs(out_path_coupled, exist_ok=True)
 
 	# update test options with options used during training
 	ckpt = torch.load(test_opts.checkpoint_path, map_location='cpu')
@@ -70,13 +75,17 @@ def run():
 		with torch.no_grad():
 			input_cuda = input_batch.cuda().float()
 			tic = time.time()
-			result_batch = run_on_batch(input_cuda, net, opts)
+			result_batch, result_latent = run_on_batch(input_cuda, net, opts)
 			toc = time.time()
 			global_time.append(toc - tic)
 
 		for i in range(opts.test_batch_size):
 			result = tensor2im(result_batch[i])
 			im_path = dataset.paths[global_i]
+			img_name = im_path.split('/')[-1].split('.')[0]
+			latent_name = f'{out_path_results}/{img_name}_latent.pkl'
+			with open(latent_name, 'wb') as file:
+				pickle.dump(result_latent[i], file)
 
 			if opts.couple_outputs or global_i % 100 == 0:
 				input_im = log_input_image(input_batch[i], opts)
@@ -108,7 +117,7 @@ def run():
 
 def run_on_batch(inputs, net, opts):
 	if opts.latent_mask is None:
-		result_batch = net(inputs, randomize_noise=False, resize=opts.resize_outputs)
+		result_batch, result_latent = net(inputs, randomize_noise=False, resize=opts.resize_outputs, return_latents=True)
 	else:
 		latent_mask = [int(l) for l in opts.latent_mask.split(",")]
 		result_batch = []
@@ -126,7 +135,7 @@ def run_on_batch(inputs, net, opts):
 					  resize=opts.resize_outputs)
 			result_batch.append(res)
 		result_batch = torch.cat(result_batch, dim=0)
-	return result_batch
+	return result_batch, result_latent
 
 
 if __name__ == '__main__':

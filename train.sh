@@ -1,0 +1,17 @@
+python scripts/train.py \
+        --dataset_type=ffhq_encode \
+        --exp_dir=train_outputs \
+        --workers=4 \
+        --batch_size=1 \
+        --test_batch_size=1 \
+        --optim_name=ranger \
+        --val_interval=1000 \
+        --save_interval=2000 \
+        --encoder_type=GradualStyleEncoder \
+        --start_from_latent_avg \
+        --lpips_lambda=0.8 \
+        --l2_lambda=1 \
+        --id_lambda=0.1 \
+        --learning_rate=0.001 \
+        --grad_accu_steps=4 \
+        --checkpoint_path=train_outputs/checkpoints/iteration_6000.pt

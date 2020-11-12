@@ -7,7 +7,7 @@ matplotlib.use('Agg')
 import torch
 from torch import nn
 from models.encoders import psp_encoders
-from models.stylegan2.model import Generator
+from models.stylegan2.model import Generator, ConstantRectangleInput
 from configs.paths_config import model_paths
 
 
@@ -26,7 +26,7 @@ class pSp(nn.Module):
 		# Define architecture
 		self.encoder = self.set_encoder()
 		self.decoder = Generator(1024, 512, 8)
-		self.face_pool = torch.nn.AdaptiveAvgPool2d((256, 256))
+		self.face_pool = torch.nn.AdaptiveAvgPool2d((256, int(256*1.5)))
 		# Load weights if needed
 		self.load_weights()
 
@@ -45,6 +45,8 @@ class pSp(nn.Module):
 		if self.opts.checkpoint_path is not None:
 			print('Loading pSp from checkpoint: {}'.format(self.opts.checkpoint_path))
 			ckpt = torch.load(self.opts.checkpoint_path, map_location='cpu')
+			constant_input = ConstantRectangleInput(512)
+			self.decoder.input = constant_input.to(self.opts.device)
 			self.encoder.load_state_dict(get_keys(ckpt, 'encoder'), strict=True)
 			self.decoder.load_state_dict(get_keys(ckpt, 'decoder'), strict=True)
 			self.__load_latent_avg(ckpt)
@@ -57,6 +59,8 @@ class pSp(nn.Module):
 			self.encoder.load_state_dict(encoder_ckpt, strict=False)
 			print('Loading decoder weights from pretrained!')
 			ckpt = torch.load(self.opts.stylegan_weights)
+			constant_input = ConstantRectangleInput(512)
+			self.decoder.input = constant_input.to(self.opts.device)
 			self.decoder.load_state_dict(ckpt['g_ema'], strict=False)
 			if self.opts.learn_in_w:
 				self.__load_latent_avg(ckpt, repeat=1)
@@ -110,4 +114,5 @@ class pSp(nn.Module):
 			if repeat is not None:
 				self.latent_avg = self.latent_avg.repeat(repeat, 1)
 		else:
-			self.latent_avg = None
+			self.decoder.to(self.opts.device)
+			self.latent_avg = self.decoder.mean_latent(4096, self.opts.device)

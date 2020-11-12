@@ -14,7 +14,12 @@ class IDLoss(nn.Module):
         self.facenet.eval()
 
     def extract_feats(self, x):
-        x = x[:, :, 35:223, 32:220]  # Crop interesting region
+        x = x[:, :, 0:196, 94:290] # Crop shoulder and reshape to square image
+        rescale = 196 / 256
+
+        # (35, 223) and (32, 220) is position on 256x256 img. 
+        # Current img size is 196x196
+        x = x[:, :, int(35*rescale):int(223*rescale), int(32*rescale):int(220*rescale)]  # Crop interesting region
         x = self.face_pool(x)
         x_feats = self.facenet(x)
         return x_feats

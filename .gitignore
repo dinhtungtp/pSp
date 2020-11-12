@@ -1,0 +1,11 @@
+*.jpg
+__pycache__
+env/
+*pt
+*pth
+*.json
+*.txt
+train_outputs*
+*.zip
+*.pkl
+*.pyc

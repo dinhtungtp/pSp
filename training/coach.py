@@ -9,7 +9,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn.functional as F
-
+from tqdm import tqdm
 from utils import common, train_utils
 from criteria import id_loss, w_norm
 from configs import data_configs
@@ -23,7 +23,12 @@ class Coach:
 	def __init__(self, opts):
 		self.opts = opts
 
-		self.global_step = 0
+		if opts.checkpoint_path:
+			self.global_step = int(opts.checkpoint_path.split('/')[-1].split('.')[0].split('_')[1])
+			print('globe', self.global_step)
+		else:
+			self.global_step = 0
+		self.grad_accu_steps = opts.grad_accu_steps
 
 		self.device = 'cuda:0'  # TODO: Allow multiple GPU? currently using CUDA_VISIBLE_DEVICES
 		self.opts.device = self.device
@@ -71,47 +76,50 @@ class Coach:
 	def train(self):
 		self.net.train()
 		while self.global_step < self.opts.max_steps:
-			for batch_idx, batch in enumerate(self.train_dataloader):
-				self.optimizer.zero_grad()
+			self.optimizer.zero_grad()
+			for batch_idx, batch in enumerate(tqdm(self.train_dataloader)):
 				x, y = batch
 				x, y = x.to(self.device).float(), y.to(self.device).float()
 				y_hat, latent = self.net.forward(x, return_latents=True)
 				loss, loss_dict, id_logs = self.calc_loss(x, y, y_hat, latent)
-				loss.backward()
-				self.optimizer.step()
+				loss /= self.grad_accu_steps
+				loss.backward(retain_graph=True)
 
-				# Logging related
-				if self.global_step % self.opts.image_interval == 0 or (
-						self.global_step < 1000 and self.global_step % 25 == 0):
-					self.parse_and_log_images(id_logs, x, y, y_hat, title='images/train/faces')
-				if self.global_step % self.opts.board_interval == 0:
-					self.print_metrics(loss_dict, prefix='train')
-					self.log_metrics(loss_dict, prefix='train')
+				if (batch_idx + 1) % self.grad_accu_steps == 0:
+					# Logging related
+					if self.global_step % self.opts.image_interval == 0 or (
+							self.global_step < 1000 and self.global_step % 25 == 0):
+						self.parse_and_log_images(id_logs, x, y, y_hat,
+												  title='images/train/faces')
+					if self.global_step % self.opts.board_interval == 0:
+						self.print_metrics(loss_dict, prefix='train')
+						self.log_metrics(loss_dict, prefix='train')
 
-				# Validation related
-				val_loss_dict = None
-				if self.global_step % self.opts.val_interval == 0 or self.global_step == self.opts.max_steps:
-					val_loss_dict = self.validate()
-					if val_loss_dict and (self.best_val_loss is None or val_loss_dict['loss'] < self.best_val_loss):
-						self.best_val_loss = val_loss_dict['loss']
-						self.checkpoint_me(val_loss_dict, is_best=True)
+					self.optimizer.step()
+					self.optimizer.zero_grad()
+					self.global_step += 1
+					# Validation related
+					val_loss_dict = None
+					if self.global_step % self.opts.val_interval == 0 or self.global_step == self.opts.max_steps:
+						val_loss_dict = self.validate()
+						if val_loss_dict and (self.best_val_loss is None or val_loss_dict['loss'] < self.best_val_loss):
+							self.best_val_loss = val_loss_dict['loss']
+							self.checkpoint_me(val_loss_dict, is_best=True)
 
-				if self.global_step % self.opts.save_interval == 0 or self.global_step == self.opts.max_steps:
-					if val_loss_dict is not None:
-						self.checkpoint_me(val_loss_dict, is_best=False)
-					else:
-						self.checkpoint_me(loss_dict, is_best=False)
+					if self.global_step % self.opts.save_interval == 0 or self.global_step == self.opts.max_steps:
+						if val_loss_dict is not None:
+							self.checkpoint_me(val_loss_dict, is_best=False)
+						else:
+							self.checkpoint_me(loss_dict, is_best=False)
 
 				if self.global_step == self.opts.max_steps:
 					print('OMG, finished training!')
 					break
 
-				self.global_step += 1
-
 	def validate(self):
 		self.net.eval()
 		agg_loss_dict = []
-		for batch_idx, batch in enumerate(self.test_dataloader):
+		for batch_idx, batch in enumerate(tqdm(self.test_dataloader)):
 			x, y = batch
 
 			with torch.no_grad():
@@ -221,7 +229,7 @@ class Coach:
 		for key, value in metrics_dict.items():
 			print('\t{} = '.format(key), value)
 
-	def parse_and_log_images(self, id_logs, x, y, y_hat, title, subscript=None, display_count=2):
+	def parse_and_log_images(self, id_logs, x, y, y_hat, title, subscript=None, display_count=1):
 		im_data = []
 		for i in range(display_count):
 			cur_im_data = {
